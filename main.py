@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -19,6 +19,14 @@ SessionLocal = sessionmaker(
     autoflush=False,
     bind=engine
 )
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 Base = declarative_base()
 
@@ -47,11 +55,12 @@ def home():
     return {"mensagem": "API funcionando!"}
 
 
+
 @app.post("/products", status_code=201)
-def create_product(product: Product):
-
-    db = SessionLocal()
-
+def create_product(
+    product: Product,
+    db=Depends(get_db)
+):
     novo_produto = ProductDB(
         nome=product.nome,
         preco=product.preco
@@ -61,8 +70,6 @@ def create_product(product: Product):
     db.commit()
     db.refresh(novo_produto)
 
-    db.close()
-
     return {
         "id": novo_produto.id,
         "nome": novo_produto.nome,
@@ -70,50 +77,39 @@ def create_product(product: Product):
     }
 
 @app.get("/products")
-def get_products():
+def list_products(db=Depends(get_db)):
+    return db.query(ProductDB).all()
 
-    db = SessionLocal()
-
-    produtos = db.query(ProductDB).all()
-
-    db.close()
-
-    return produtos
 
 
 @app.get("/products/stats")
-def get_product_stats():
-    db = SessionLocal()
+def get_product_stats(db=Depends(get_db)):
+    products = db.query(ProductDB).all()
 
-    try:
-        products = db.query(ProductDB).all()
+    total_produtos = len(products)
+    valor_total = sum(product.preco for product in products)
 
-        total_produtos = len(products)
-        valor_total = sum(product.preco for product in products)
-        preco_medio = (
-            valor_total / total_produtos
-            if total_produtos > 0
-            else 0
-        )
+    preco_medio = (
+        valor_total / total_produtos
+        if total_produtos > 0
+        else 0
+    )
 
-        return {
-            "total_produtos": total_produtos,
-            "valor_total": round(valor_total, 2),
-            "preco_medio": round(preco_medio, 2)
-        }
-    finally:
-        db.close()
+    return {
+        "total_produtos": total_produtos,
+        "valor_total": round(valor_total, 2),
+        "preco_medio": round(preco_medio, 2)
+    }
+
 
 @app.get("/products/{product_id}")
-def get_product(product_id: int):
-
-    db = SessionLocal()
-
+def get_product(
+    product_id: int,
+    db=Depends(get_db)
+):
     produto = db.query(ProductDB).filter(
         ProductDB.id == product_id
     ).first()
-
-    db.close()
 
     if produto is None:
         raise HTTPException(
@@ -123,17 +119,18 @@ def get_product(product_id: int):
 
     return produto
 
+
 @app.put("/products/{product_id}")
-def update_product(product_id: int, product: Product):
-
-    db = SessionLocal()
-
+def update_product(
+    product_id: int,
+    product: Product,
+    db=Depends(get_db)
+):
     produto = db.query(ProductDB).filter(
         ProductDB.id == product_id
     ).first()
 
     if produto is None:
-        db.close()
         raise HTTPException(
             status_code=404,
             detail="Produto não encontrado"
@@ -145,25 +142,23 @@ def update_product(product_id: int, product: Product):
     db.commit()
     db.refresh(produto)
 
-    db.close()
-
     return {
         "id": produto.id,
         "nome": produto.nome,
         "preco": produto.preco
     }
 
+
 @app.delete("/products/{product_id}")
-def delete_product(product_id: int):
-
-    db = SessionLocal()
-
+def delete_product(
+    product_id: int,
+    db=Depends(get_db)
+):
     produto = db.query(ProductDB).filter(
         ProductDB.id == product_id
     ).first()
 
     if produto is None:
-        db.close()
         raise HTTPException(
             status_code=404,
             detail="Produto não encontrado"
@@ -172,8 +167,6 @@ def delete_product(product_id: int):
     db.delete(produto)
     db.commit()
 
-    db.close()
-
     return {
-        "mensagem": "Produto excluído com sucesso"
+        "message": "Produto excluído com sucesso"
     }
