@@ -152,3 +152,126 @@ def test_delete_nonexistent_product():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Produto não encontrado"
+
+    
+
+def test_create_user():
+    response = client.post(
+        "/users",
+        json={
+            "username": "novo_usuario",
+            "password": "SenhaTeste123!"
+        }
+    )
+
+    assert response.status_code == 201
+    assert response.json()["username"] == "novo_usuario"
+    assert "password" not in response.json()
+    assert "hashed_password" not in response.json()
+
+
+def test_create_duplicate_user():
+    user_data = {
+        "username": "usuario_duplicado",
+        "password": "SenhaTeste123!"
+    }
+
+    first_response = client.post("/users", json=user_data)
+    second_response = client.post("/users", json=user_data)
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"] == (
+        "Nome de usuário já cadastrado"
+    )
+
+
+def test_login_success():
+    # Cria um usuário
+    create_response = client.post(
+        "/users",
+        json={
+            "username": "login_valido",
+            "password": "SenhaTeste123!"
+        }
+    )
+
+    assert create_response.status_code == 201
+
+    # Faz login com a senha correta
+    response = client.post(
+        "/login",
+        json={
+            "username": "login_valido",
+            "password": "SenhaTeste123!"
+        }
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+
+def test_login_wrong_password():
+    # Cria um usuário
+    create_response = client.post(
+        "/users",
+        json={
+            "username": "login_senha_errada",
+            "password": "SenhaCorreta123!"
+        }
+    )
+
+    assert create_response.status_code == 201
+
+    # Tenta fazer login com a senha errada
+    response = client.post(
+        "/login",
+        json={
+            "username": "login_senha_errada",
+            "password": "SenhaErrada123!"
+        }
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Usuário ou senha inválidos"
+    )
+
+    
+def test_me_without_token():
+    response = client.get("/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Token de autenticação ausente ou inválido"
+    )
+
+
+def test_me_with_valid_token():
+    # Cria um usuário de teste
+    user_data = {
+        "username": "usuario_autenticado",
+        "password": "SenhaTeste123!"
+    }
+
+    create_response = client.post("/users", json=user_data)
+    assert create_response.status_code == 201
+
+    # Faz login para obter um token válido
+    login_response = client.post("/login", json=user_data)
+    assert login_response.status_code == 200
+
+    token = login_response.json()["access_token"]
+
+    # Acessa a rota protegida com o token
+    response = client.get(
+        "/me",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["username"] == "usuario_autenticado"
+    assert "id" in response.json()
