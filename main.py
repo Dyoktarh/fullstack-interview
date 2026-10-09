@@ -80,6 +80,30 @@ def get_products():
 
     return produtos
 
+
+@app.get("/products/stats")
+def get_product_stats():
+    db = SessionLocal()
+
+    try:
+        products = db.query(ProductDB).all()
+
+        total_produtos = len(products)
+        valor_total = sum(product.preco for product in products)
+        preco_medio = (
+            valor_total / total_produtos
+            if total_produtos > 0
+            else 0
+        )
+
+        return {
+            "total_produtos": total_produtos,
+            "valor_total": round(valor_total, 2),
+            "preco_medio": round(preco_medio, 2)
+        }
+    finally:
+        db.close()
+
 @app.get("/products/{product_id}")
 def get_product(product_id: int):
 
