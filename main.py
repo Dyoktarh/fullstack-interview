@@ -1,10 +1,17 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
+from pwdlib import PasswordHash
+import jwt
+from datetime import datetime, timedelta, timezone
 
 app = FastAPI()
+password_hash = PasswordHash.recommended()
 
+SECRET_KEY = "chave-local-de-desenvolvimento-altere-depois"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Conexão com o banco SQLite
 DATABASE_URL = "sqlite:///./products.db"
@@ -39,6 +46,17 @@ class ProductDB(Base):
     nome = Column(String)
     preco = Column(Float)
 
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+class UserDB(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
 
 # Cria a tabela caso ela ainda não exista
 Base.metadata.create_all(bind=engine)
@@ -169,4 +187,137 @@ def delete_product(
 
     return {
         "message": "Produto excluído com sucesso"
+    }
+
+
+@app.post("/users", status_code=201)
+def create_user(
+    user: UserCreate,
+    db=Depends(get_db)
+):
+    existing_user = db.query(UserDB).filter(
+        UserDB.username == user.username
+    ).first()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail="Nome de usuário já cadastrado"
+        )
+
+    hashed_password = password_hash.hash(user.password)
+
+    new_user = UserDB(
+        username=user.username,
+        hashed_password=hashed_password
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return {
+        "id": new_user.id,
+        "username": new_user.username
+    }
+
+
+@app.post("/login")
+def login(
+    user: UserCreate,
+    db=Depends(get_db)
+):
+    existing_user = db.query(UserDB).filter(
+        UserDB.username == user.username
+    ).first()
+
+    if not existing_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Usuário ou senha inválidos"
+        )
+
+    password_is_valid = password_hash.verify(
+        user.password,
+        existing_user.hashed_password
+    )
+
+    if not password_is_valid:
+        raise HTTPException(
+            status_code=401,
+            detail="Usuário ou senha inválidos"
+        )
+
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    token = jwt.encode(
+        {
+            "sub": existing_user.username,
+            "exp": expire
+        },
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
+
+
+def get_current_user(
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db)
+):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Token de autenticação ausente ou inválido"
+        )
+
+    token = authorization.split(" ", 1)[1]
+
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
+
+        username = payload.get("sub")
+
+        if not username:
+            raise HTTPException(
+                status_code=401,
+                detail="Token inválido"
+            )
+
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido ou expirado"
+        )
+
+    current_user = db.query(UserDB).filter(
+        UserDB.username == username
+    ).first()
+
+    if not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Usuário não encontrado"
+        )
+
+    return current_user
+
+
+@app.get("/me")
+def read_current_user(
+    current_user: UserDB = Depends(get_current_user)
+):
+    return {
+        "id": current_user.id,
+        "username": current_user.username
     }
