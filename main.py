@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -39,7 +39,7 @@ Base.metadata.create_all(bind=engine)
 # Modelo usado para receber os dados da API
 class Product(BaseModel):
     nome: str
-    preco: float
+    preco: float = Field(gt=0)
 
 
 @app.get("/")
